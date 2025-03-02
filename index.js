@@ -9,10 +9,17 @@ require("dotenv").config();
 const app = express();
 const port = process.env.PORT || 5000;
 
+
+// CORS Configuration
+const corsOptions = {
+  origin: "https://sharelink-108c0.web.app",
+  methods: "GET,POST,PUT,DELETE,OPTIONS",
+  credentials: true,
+};
+app.use(cors(corsOptions));
+
 // Middleware
-app.use(cors());
 app.use(express.json());
-// Serve static files from the uploads folder
 app.use("/uploads", express.static("uploads"));
 
 // Multer configuration for file storage
@@ -25,13 +32,13 @@ const storage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    // Use a unique filename: timestamp + original extension
+   
     cb(null, Date.now() + path.extname(file.originalname));
   },
 });
 const upload = multer({ storage });
 
-// MongoDB connection string from .env
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.7xkdi.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 const client = new MongoClient(uri, {
   serverApi: {
@@ -43,14 +50,14 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
-    console.log("Connected to MongoDB");
+    // await client.connect();
+   
 
     const db = client.db("sharelinkDb");
     const usersCollection = db.collection("users");
     const linksCollection = db.collection("links");
 
-    // ---------- USER ROUTES ----------
+    
     app.post("/users", async (req, res) => {
       const { _id, email, name, photo } = req.body;
       const existingUser = await usersCollection.findOne({ email });
@@ -67,9 +74,9 @@ async function run() {
       }
     });
 
-    // ---------- LINK ROUTES ----------
+    
 
-    // Get all links – if query param "email" is provided, filter by userEmail.
+    
     app.get("/links", async (req, res) => {
       try {
         const email = req.query.email;
@@ -149,8 +156,7 @@ async function run() {
       }
     });
     
-    // GET /links/:id – renders the shareable link page.
-    // Public links are visible to anyone; for private links, the correct password must be provided via ?password=...
+    
     app.get("/links/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -259,15 +265,15 @@ async function run() {
     // Create a new link with file upload
     app.post("/links", upload.single("file"), async (req, res) => {
       try {
-        const { userId, userEmail, title, visibility, password, expiration } =
-          req.body;
-        if (!userId || !req.file) {
-          return res
-            .status(400)
-            .json({ message: "User ID and file are required" });
+        const { userId, userEmail, title, visibility, password, expiration } = req.body;
+        const file = req.file;
+    
+        if (!userId || !file) {
+          return res.status(400).json({ message: "User ID and file are required" });
         }
-        const fileUrl = `/uploads/${req.file.filename}`;
-
+    
+        const fileUrl = `/uploads/${file.filename}`;
+    
         const newLink = {
           title,
           userId,
@@ -279,22 +285,32 @@ async function run() {
           createdAt: new Date().toLocaleDateString(),
           accessCount: 0,
         };
-
+    
         const result = await linksCollection.insertOne(newLink);
         res.status(201).json({
           message: "Link created successfully",
           id: result.insertedId,
         });
       } catch (error) {
-        res.status(500).json({ message: "Failed to create link", error });
+        console.error("Error creating link:", error);
+        res.status(500).json({ message: "Failed to create link", error: error.message });
       }
     });
 
+    // Handle OPTIONS preflight requests
+    app.options("/links", (req, res) => {
+      res.header("Access-Control-Allow-Origin", "https://sharelink-108c0.web.app");
+      res.header("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+      res.header("Access-Control-Allow-Headers", "Content-Type");
+      res.send();
+    });
+
     // (Optional) Ping to check connection
-    await db.command({ ping: 1 });
-    console.log("Pinged your deployment. Connected to MongoDB!");
+    // await db.command({ ping: 1 });
+    // console.log("Pinged your deployment. Connected to MongoDB!");
   } finally {
-    // Do not close the client so that our server stays connected.
+    // Ensures that the client will close when you finish/error
+    // await client.close();
   }
 }
 run().catch(console.dir);
