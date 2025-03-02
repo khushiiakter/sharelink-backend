@@ -43,8 +43,8 @@ deprecationErrors: true,
 
 async function run() {
 try {
-await client.connect();
-console.log("Connected to MongoDB");
+// await client.connect();
+// console.log("Connected to MongoDB");
 
 const db = client.db("sharelinkDb");
 const usersCollection = db.collection("users");
@@ -295,8 +295,8 @@ res.status(500).json({ message: "Failed to create link", error });
 });
 
 // (Optional) Ping to check connection
-await db.command({ ping: 1 });
-console.log("Pinged your deployment. Connected to MongoDB!");
+// await db.command({ ping: 1 });
+// console.log("Pinged your deployment. Connected to MongoDB!");
 } finally {
 // Do not close the client so that our server stays connected.
 }
