@@ -84,34 +84,6 @@ async function run() {
       }
     });
 
-    // Create a new link with file upload
-    app.post("/links", upload.single("file"), async (req, res) => {
-      try {
-        const { userId, userEmail, title, visibility, password, expiration } = req.body;
-        if (!userId || !req.file) {
-          return res.status(400).json({ message: "User ID and file are required" });
-        }
-        const fileUrl = `/uploads/${req.file.filename}`;
-
-        const newLink = {
-          title,
-          userId,
-          userEmail,
-          fileUrl,
-          visibility: visibility || "public",
-          password: visibility === "private" ? password : null,
-          expiration: expiration ? new Date(expiration) : null,
-          createdAt: new Date().toLocaleDateString(),
-          accessCount: 0,
-        };
-
-        const result = await linksCollection.insertOne(newLink);
-        res.status(201).json({ message: "Link created successfully", id: result.insertedId });
-      } catch (error) {
-        res.status(500).json({ message: "Failed to create link", error });
-      }
-    });
-
     // Delete a link (and delete its file)
     app.delete("/links/:id", async (req, res) => {
       try {
@@ -126,35 +98,40 @@ async function run() {
             fs.unlinkSync(filePath);
           }
         }
-        const result = await linksCollection.deleteOne({ _id: new ObjectId(id) });
+        const result = await linksCollection.deleteOne({
+          _id: new ObjectId(id),
+        });
         res.json({ message: "Link deleted successfully", result });
       } catch (error) {
         res.status(500).json({ message: "Failed to delete link", error });
       }
     });
 
-    // Update a link's metadata (visibility, password, expiration)
     app.put("/links/:id", async (req, res) => {
+      const { id } = req.params;
+      const updatedLink = req.body;
+    
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ success: false, message: "Invalid task ID." });
+      }
+    
       try {
-        const { id } = req.params;
-        const { visibility, password, expiration } = req.body;
-        const updatedLink = {
-          visibility,
-          password: visibility === "private" ? password : null,
-          expiration: expiration ? new Date(expiration) : null,
-        };
         const result = await linksCollection.updateOne(
           { _id: new ObjectId(id) },
           { $set: updatedLink }
         );
+    
         if (result.modifiedCount === 0) {
-          return res.status(404).json({ message: "No link found to update" });
+          return res.status(404).send({ success: false, message: "Link not found or no changes made." });
         }
-        res.json({ message: "Link updated successfully" });
+    
+        res.send({ success: true, message: "Link updated successfully." });
       } catch (error) {
-        res.status(500).json({ message: "Failed to update link", error });
+        console.error("Error updating link:", error);
+        res.status(500).send({ success: false, message: "Internal Server Error" });
       }
     });
+
 
     // Get link analytics (access count)
     app.get("/analytics/:id", async (req, res) => {
@@ -184,11 +161,50 @@ async function run() {
 
         // If private, check password
         if (link.visibility === "private" && link.password !== password) {
-          return res.status(403).send("Incorrect password");
+          return res.send(`
+            <html>
+              <head>
+                <title>Access Denied</title>
+                <style>
+                  body {
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    background-color: #f8d7da;
+                    font-family: Arial, sans-serif;
+                  }
+                  .message {
+                    text-align: center;
+                    padding: 20px;
+                    background: white;
+                    border: 1px solid #721c24;
+                    border-radius: 10px;
+                    box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
+                  }
+                  h1 {
+                    color: #721c24;
+                  }
+                  p {
+                    color: #721c24;
+                  }
+                </style>
+              </head>
+              <body>
+                <div class="message">
+                  <h1>Access Denied</h1>
+                  <p>You are not authorized to view this page.</p>
+                </div>
+              </body>
+            </html>
+          `);
         }
 
         // Increment access count
-        await linksCollection.updateOne({ _id: new ObjectId(id) }, { $inc: { accessCount: 1 } });
+        await linksCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $inc: { accessCount: 1 } }
+        );
 
         // Render a simple HTML page to preview the file and provide a download option.
         const fileUrl = link.fileUrl;
@@ -202,7 +218,6 @@ async function run() {
           html += `<div style="display: flex; justify-content: center;  ">
     <img src="${fileUrl}" alt="${link.title}" style="width: 80%; height: auto;"/>
   </div>`;
-          
         } else if (ext === ".pdf") {
           // For PDF files, embed preview in an iframe
           html += `<iframe src="${fileUrl}" style="width:100%; height:600px;" frameborder="0"></iframe>`;
@@ -213,7 +228,9 @@ async function run() {
             fileUrl
           )}&embedded=true" style="width:100%; height:600px;" frameborder="0"></iframe>`;
           html += `<p><a href="${fileUrl}" download>Download Document</a></p>`;
-        } else if ([".txt", ".md", ".json", ".js", ".html", ".css"].includes(ext)) {
+        } else if (
+          [".txt", ".md", ".json", ".js", ".html", ".css"].includes(ext)
+        ) {
           // For text files, display content
           const filePath = path.join(__dirname, fileUrl);
           if (fs.existsSync(filePath)) {
@@ -232,6 +249,40 @@ async function run() {
       } catch (error) {
         console.error(error);
         res.status(500).send("Error retrieving link");
+      }
+    });
+
+    // Create a new link with file upload
+    app.post("/links", upload.single("file"), async (req, res) => {
+      try {
+        const { userId, userEmail, title, visibility, password, expiration } =
+          req.body;
+        if (!userId || !req.file) {
+          return res
+            .status(400)
+            .json({ message: "User ID and file are required" });
+        }
+        const fileUrl = `/uploads/${req.file.filename}`;
+
+        const newLink = {
+          title,
+          userId,
+          userEmail,
+          fileUrl,
+          visibility: visibility || "public",
+          password: visibility === "private" ? password : null,
+          expiration: expiration ? new Date(expiration) : null,
+          createdAt: new Date().toLocaleDateString(),
+          accessCount: 0,
+        };
+
+        const result = await linksCollection.insertOne(newLink);
+        res.status(201).json({
+          message: "Link created successfully",
+          id: result.insertedId,
+        });
+      } catch (error) {
+        res.status(500).json({ message: "Failed to create link", error });
       }
     });
 
