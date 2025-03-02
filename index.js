@@ -51,7 +51,6 @@ async function run() {
     const linksCollection = db.collection("links");
 
     // ---------- USER ROUTES ----------
-
     app.post("/users", async (req, res) => {
       const { _id, email, name, photo } = req.body;
       const existingUser = await usersCollection.findOne({ email });
@@ -70,7 +69,7 @@ async function run() {
 
     // ---------- LINK ROUTES ----------
 
-    // Get all links – if a query parameter "email" is provided, filter by userEmail.
+    // Get all links – if query param "email" is provided, filter by userEmail.
     app.get("/links", async (req, res) => {
       try {
         const email = req.query.email;
@@ -134,11 +133,10 @@ async function run() {
       }
     });
 
-    // Update a link's metadata (for example, visibility, password, expiration)
+    // Update a link's metadata (visibility, password, expiration)
     app.put("/links/:id", async (req, res) => {
       try {
         const { id } = req.params;
-        // In update, we assume no file update – only metadata changes.
         const { visibility, password, expiration } = req.body;
         const updatedLink = {
           visibility,
@@ -170,8 +168,8 @@ async function run() {
       }
     });
 
-    // GET /links/:id – this endpoint renders the shareable link page.
-    // If the link is public, anyone can see it; if private, a query parameter ?password=... must match.
+    // GET /links/:id – renders the shareable link page.
+    // Public links are visible to anyone; for private links, the correct password must be provided via ?password=...
     app.get("/links/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -192,18 +190,31 @@ async function run() {
         // Increment access count
         await linksCollection.updateOne({ _id: new ObjectId(id) }, { $inc: { accessCount: 1 } });
 
-        // Render a simple HTML page for preview/download.
-        const fileUrl = link.fileUrl; // e.g. "/uploads/1634567890123.png"
+        // Render a simple HTML page to preview the file and provide a download option.
+        const fileUrl = link.fileUrl;
         const ext = path.extname(fileUrl).toLowerCase();
         let html = `<html><head><title>${link.title}</title></head><body>`;
-        html += `<h1>${link.title}</h1>`;
+        html += ``;
 
-        // If image, show preview.
         if ([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"].includes(ext)) {
-          html += `<img src="${fileUrl}" alt="${link.title}" style="max-width:100%;"/>`;
-        }
-        // For text files, display content.
-        else if ([".txt", ".md", ".json", ".js", ".html", ".css"].includes(ext)) {
+          // For images, show preview
+          html += `<p style="display: flex; justify-content: center;  "><a href="${fileUrl}"  download>Download </a></p>`;
+          html += `<div style="display: flex; justify-content: center;  ">
+    <img src="${fileUrl}" alt="${link.title}" style="width: 80%; height: auto;"/>
+  </div>`;
+          
+        } else if (ext === ".pdf") {
+          // For PDF files, embed preview in an iframe
+          html += `<iframe src="${fileUrl}" style="width:100%; height:600px;" frameborder="0"></iframe>`;
+          html += `<p><a href="${fileUrl}" download>Download PDF</a></p>`;
+        } else if ([".doc", ".docx"].includes(ext)) {
+          // For Word documents, use Google Docs Viewer
+          html += `<iframe src="https://docs.google.com/gview?url=${encodeURIComponent(
+            fileUrl
+          )}&embedded=true" style="width:100%; height:600px;" frameborder="0"></iframe>`;
+          html += `<p><a href="${fileUrl}" download>Download Document</a></p>`;
+        } else if ([".txt", ".md", ".json", ".js", ".html", ".css"].includes(ext)) {
+          // For text files, display content
           const filePath = path.join(__dirname, fileUrl);
           if (fs.existsSync(filePath)) {
             const content = fs.readFileSync(filePath, "utf8");
@@ -212,9 +223,10 @@ async function run() {
             html += `<p>File not found on server.</p>`;
           }
         } else {
-          // For other files, provide a download link.
+          // For other file types, provide a download link
           html += `<p><a href="${fileUrl}" download>Download File</a></p>`;
         }
+
         html += `</body></html>`;
         res.send(html);
       } catch (error) {
@@ -223,12 +235,11 @@ async function run() {
       }
     });
 
-    // Send a ping to confirm a successful connection (optional)
+    // (Optional) Ping to check connection
     await db.command({ ping: 1 });
     console.log("Pinged your deployment. Connected to MongoDB!");
   } finally {
     // Do not close the client so that our server stays connected.
-	 // await client.close();
   }
 }
 run().catch(console.dir);
