@@ -120,6 +120,10 @@ async function run() {
           { _id: new ObjectId(id) },
           { $set: updatedLink }
         );
+        await linksCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $inc: { accessCount: 1 } }
+        );
     
         if (result.modifiedCount === 0) {
           return res.status(404).send({ success: false, message: "Link not found or no changes made." });
@@ -138,13 +142,13 @@ async function run() {
       try {
         const { id } = req.params;
         const link = await linksCollection.findOne({ _id: new ObjectId(id) });
-        if (!link) return res.status(404).json({ message: "Link not found" });
-        res.json({ accessCount: link.accessCount });
+        if (!link) return res.status(404).send("Link not found");
+        res.send({ accessCount: link.accessCount });
       } catch (error) {
-        res.status(500).json({ message: "Failed to fetch analytics", error });
+        res.status(500).send("Failed to fetch analytics");
       }
     });
-
+    
     // GET /links/:id – renders the shareable link page.
     // Public links are visible to anyone; for private links, the correct password must be provided via ?password=...
     app.get("/links/:id", async (req, res) => {
