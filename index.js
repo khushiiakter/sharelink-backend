@@ -1,36 +1,34 @@
 const express = require("express");
 const cors = require("cors");
-const multer = require("multer");
-const path = require("path");
-const fs = require("fs");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+
+const multer = require("multer");
+const { v2: cloudinary } = require("cloudinary");
+const streamifier = require("streamifier");
+const fs = require("fs");
+const path = require("path");
+
 require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+app.use(cors()); 
 app.use(express.json());
 
-// Serve static files from the uploads folder
-app.use("/uploads", express.static("uploads"));
 
-// Multer configuration for file storage
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = "uploads";
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir);
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    // Use a unique filename: timestamp + original extension
-    cb(null, Date.now() + path.extname(file.originalname));
-  },
+// Cloudinary Configuration
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+
+// Multer Configuration for Memory Storage (Cloudinary Upload)
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
+
 
 // MongoDB connection string from .env
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.7xkdi.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -44,7 +42,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     // console.log("Connected to MongoDB");
 
     const db = client.db("sharelinkDb");
@@ -85,87 +83,8 @@ async function run() {
       }
     });
 
-    // Delete a link (and delete its file)
-    app.delete("/links/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const link = await linksCollection.findOne({ _id: new ObjectId(id) });
-        if (!link) return res.status(404).json({ message: "Link not found" });
-
-        // Delete file from server if exists
-        if (link.fileUrl) {
-          const filePath = path.join(__dirname, link.fileUrl);
-          if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-          }
-        }
-        const result = await linksCollection.deleteOne({
-          _id: new ObjectId(id),
-        });
-        res.json({ message: "Link deleted successfully", result });
-      } catch (error) {
-        res.status(500).json({ message: "Failed to delete link", error });
-      }
-    });
-
-    app.put("/links/:id", async (req, res) => {
-      const { id } = req.params;
-      const updatedLink = req.body;
-
-      if (!ObjectId.isValid(id)) {
-        return res
-          .status(400)
-          .send({ success: false, message: "Invalid task ID." });
-      }
-
-      try {
-        const result = await linksCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $set: updatedLink }
-        );
-        await linksCollection.updateOne(
-          { _id: new ObjectId(id) },
-          { $inc: { accessCount: 1 } }
-        );
-
-        if (result.modifiedCount === 0) {
-          return res
-            .status(404)
-            .send({
-              success: false,
-              message: "Link not found or no changes made.",
-            });
-        }
-
-        res.send({ success: true, message: "Link updated successfully." });
-      } catch (error) {
-        console.error("Error updating link:", error);
-        res
-          .status(500)
-          .send({ success: false, message: "Internal Server Error" });
-      }
-    });
-
-    // Get link analytics (access count)
-    app.get("/analytics/:id", async (req, res) => {
-      try {
-        const { id } = req.params;
-        const link = await linksCollection.findOne({ _id: new ObjectId(id) });
-    
-        if (!link) {
-          return res.status(404).json({ message: "Link not found" });
-        }
-    
-        res.json({ accessCount: link.accessCount });
-      } catch (error) {
-        console.error("Error fetching analytics:", error);
-        res.status(500).json({ message: "Failed to fetch analytics", error });
-      }
-    });
-    
-
    
-    // Public links are visible to anyone; for private links, the correct password must be provided via ?password=...
+   
     app.get("/links/:id", async (req, res) => {
       try {
         const { id } = req.params;
@@ -271,43 +190,141 @@ async function run() {
       }
     });
 
-    // Create a new link with file upload
-    app.post("/links", upload.single("file"), async (req, res) => {
-      try {
-        const { userId, userEmail, title, visibility, password, expiration } =
-          req.body;
-        if (!userId || !req.file) {
-          return res
-            .status(400)
-            .json({ message: "User ID and file are required" });
-        }
-        const fileUrl = `/uploads/${req.file.filename}`;
-
-        const newLink = {
-          title,
-          userId,
-          userEmail,
-          fileUrl,
-          visibility: visibility || "public",
-          password: visibility === "private" ? password : null,
-          expiration: expiration ? new Date(expiration) : null,
-          createdAt: new Date().toLocaleDateString(),
-          accessCount: 0,
-        };
-
-        const result = await linksCollection.insertOne(newLink);
-        res.status(201).json({
-          message: "Link created successfully",
-          id: result.insertedId,
-        });
-      } catch (error) {
-        res.status(500).json({ message: "Failed to create link", error });
+    
+   // Create a new link with Cloudinary file upload
+   app.post("/links", upload.single("file"), async (req, res) => {
+    try {
+      const { userId, userEmail, title, visibility, password, expiration } =
+        req.body;
+      if (!userId || !req.file) {
+        return res
+          .status(400)
+          .json({ message: "User ID and file are required" });
       }
-    });
 
+      // Upload to Cloudinary
+      const fileBuffer = req.file.buffer;
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          folder: "sharelink",
+          resource_type: "auto",
+          type: "upload",
+          access_mode: "public", 
+        },
+        async (error, result) => {
+          if (error) {
+            return res.status(500).json({ message: "File upload failed", error });
+          }
+
+          const newLink = {
+            title,
+            userId,
+            userEmail,
+            fileUrl: result.secure_url,
+            visibility: visibility || "public",
+            password: visibility === "private" ? password : null,
+            expiration: expiration ? new Date(expiration) : null,
+            createdAt: new Date(),
+            accessCount: 0,
+          };
+
+          const dbResult = await linksCollection.insertOne(newLink);
+          res.status(201).json({
+            message: "Link created successfully",
+            id: dbResult.insertedId,
+            fileUrl: result.secure_url,
+          });
+        }
+      );
+
+      streamifier.createReadStream(fileBuffer).pipe(uploadStream);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to create link", error });
+    }
+  });
+
+  app.put("/links/:id", async (req, res) => {
+    const { id } = req.params;
+    const updatedLink = req.body;
+
+    if (!ObjectId.isValid(id)) {
+      return res
+        .status(400)
+        .send({ success: false, message: "Invalid task ID." });
+    }
+
+    try {
+      const result = await linksCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: updatedLink }
+      );
+      await linksCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $inc: { accessCount: 1 } }
+      );
+
+      if (result.modifiedCount === 0) {
+        return res
+          .status(404)
+          .send({
+            success: false,
+            message: "Link not found or no changes made.",
+          });
+      }
+
+      res.send({ success: true, message: "Link updated successfully." });
+    } catch (error) {
+      console.error("Error updating link:", error);
+      res
+        .status(500)
+        .send({ success: false, message: "Internal Server Error" });
+    }
+  });
+
+  // Delete a link (Cloudinary file deletion included)
+  app.delete("/links/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const link = await linksCollection.findOne({ _id: new ObjectId(id) });
+
+      if (!link) return res.status(404).json({ message: "Link not found" });
+
+      // Extract Cloudinary file public_id from URL
+      const fileUrl = link.fileUrl;
+      const publicId = fileUrl.split("/").pop().split(".")[0];
+
+      // Delete file from Cloudinary
+      await cloudinary.uploader.destroy(`sharelink/${publicId}`);
+
+      // Delete from database
+      await linksCollection.deleteOne({ _id: new ObjectId(id) });
+
+      res.json({ message: "Link deleted successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Error deleting link", error });
+    }
+  });
+
+
+   // Get link analytics (access count)
+   app.get("/analytics/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const link = await linksCollection.findOne({ _id: new ObjectId(id) });
+  
+      if (!link) {
+        return res.status(404).json({ message: "Link not found" });
+      }
+  
+      res.json({ accessCount: link.accessCount });
+    } catch (error) {
+      console.error("Error fetching analytics:", error);
+      res.status(500).json({ message: "Failed to fetch analytics", error });
+    }
+  });
     // (Optional) Ping to check connection
-    await db.command({ ping: 1 });
-    console.log("Pinged your deployment. Connected to MongoDB!");
+    // await db.command({ ping: 1 });
+    // console.log("Pinged your deployment. Connected to MongoDB!");
   } finally {
     // Do not close the client so that our server stays connected.
   }
